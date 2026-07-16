@@ -837,9 +837,13 @@
         background: none; border: 1px solid var(--border-color); color: var(--text-main); font-size: 0.95rem; margin-bottom: 6px; }
     .pdf-xbtn:hover { border-color: var(--text-accent); color: var(--text-accent); }
     #pdf-collapse { transition: transform .15s; }
+    /* collapsed: hide the source-name tabs AND the toolbar, leaving a slim bar */
     #pdf-panel.tb-collapsed #pdf-collapse { transform: rotate(180deg); }
-    .pdf-toolbar { display: flex; align-items: center; gap: 5px; padding: 8px 10px; border-top: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle); flex-wrap: wrap; }
+    #pdf-panel.tb-collapsed .pdf-tabs { display: none; }
+    #pdf-panel.tb-collapsed .pdf-head { justify-content: flex-end; padding: 6px 8px; border-bottom: 1px solid var(--border-subtle); }
+    #pdf-panel.tb-collapsed .pdf-xbtn { margin-bottom: 0; }
     #pdf-panel.tb-collapsed .pdf-toolbar { display: none; }
+    .pdf-toolbar { display: flex; align-items: center; gap: 5px; padding: 8px 10px; border-top: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle); flex-wrap: wrap; }
     .pdf-tbtn { font-family: var(--font-main); font-weight: 700; cursor: pointer; background: var(--bg-input);
         border: 1px solid var(--border-color); color: var(--text-main); border-radius: 7px; padding: 5px 10px; font-size: 0.85rem; }
     .pdf-tbtn:hover { border-color: var(--text-accent); }
@@ -847,9 +851,10 @@
         background: var(--bg-input); border: 1px solid var(--border-color); color: var(--text-main); border-radius: 7px; }
     .pdf-pagetot { font-size: 0.78rem; color: var(--text-muted); }
     .pdf-tb-sep { flex: 1; }
-    .pdf-scroll { flex: 1; overflow: auto; background: #3b3b3b; position: relative; padding: 12px 0; }
-    #pdf-pages { display: flex; flex-direction: column; align-items: center; gap: 12px; }
-    .pdf-page { background: #fff; box-shadow: 0 4px 18px rgba(0,0,0,0.45); }
+    .pdf-scroll { flex: 1; overflow: auto; background: #3b3b3b; position: relative; padding: 12px; }
+    #pdf-pages { display: block; }
+    .pdf-page { margin: 0 auto 12px; background: #fff; box-shadow: 0 4px 18px rgba(0,0,0,0.45); }
+    .pdf-page:last-child { margin-bottom: 0; }
     .pdf-page canvas { display: block; }
     .pdf-loading { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 6;
         background: var(--bg-card); color: var(--text-muted); font-size: 0.8rem; padding: 6px 14px;
@@ -1062,7 +1067,7 @@
     <aside id="pdf-panel" aria-label="Source PDF reader">
         <div class="pdf-head">
             <div class="pdf-tabs" id="pdf-tabs"></div>
-            <button id="pdf-collapse" class="pdf-xbtn" title="Collapse / expand the toolbar" aria-label="Collapse toolbar">&#9650;</button>
+            <button id="pdf-collapse" class="pdf-xbtn" title="Collapse / expand the top bar" aria-label="Collapse top bar">&#9650;</button>
             <button id="pdf-close" class="pdf-xbtn" title="Hide reader (V)" aria-label="Hide reader" onclick="togglePdfReader(false)">&#10005;</button>
         </div>
         <div class="pdf-toolbar" id="pdf-toolbar">
@@ -1073,7 +1078,8 @@
             <span class="pdf-tb-sep"></span>
             <button id="pdf-zoomout" class="pdf-tbtn" title="Zoom out" aria-label="Zoom out">&#8211;</button>
             <button id="pdf-zoomin" class="pdf-tbtn" title="Zoom in" aria-label="Zoom in">+</button>
-            <button id="pdf-fit" class="pdf-tbtn" title="Fit page width">Fit</button>
+            <button id="pdf-fitw" class="pdf-tbtn" title="Fit the page to the panel width">Fit&nbsp;W</button>
+            <button id="pdf-fith" class="pdf-tbtn" title="Fit the page to the panel height">Fit&nbsp;H</button>
         </div>
         <div class="pdf-scroll" id="pdf-scroll">
             <div class="pdf-loading pdf-hidden" id="pdf-loading">Loading&#8230;</div>
@@ -2257,7 +2263,7 @@ const PDF_SOURCES = [
 let pdfjsLib = null;
 const _pdfCache = {};      // file -> Promise<pdf>
 const _citeCache = {};     // question index -> parsed citation
-const pdfView = { entry:null, pdf:null, numPages:1, scale:1.2, baseW:0, baseH:0, page:1, rendered:new Set(), observer:null, _st:null };
+const pdfView = { entry:null, pdf:null, numPages:1, scale:1.2, baseW:0, baseH:0, page:1, dims:{}, rendered:new Set(), observer:null, _st:null };
 let _pdfLoadTimer = null;
 
 function pdfNormTitle(t){ return String(t||'').toLowerCase().replace(/\bpdf\b/g,'').replace(/[^a-z0-9]+/g,' ').trim(); }
@@ -2289,8 +2295,7 @@ function pdfParseCitations(src){
 function pdfHasSources(){ return PDF_SOURCES.some(e=>e && e.file); }
 function pdfResolve(titleKey){ for(let i=0;i<PDF_SOURCES.length;i++){ const e=PDF_SOURCES[i]; if(e && e.file && pdfNormTitle(e.title)===titleKey) return { entry:e, index:i }; } return null; }
 
-/* Build the "Source:" line, adding a Jump chip per cited page (chips are hidden by CSS
-   unless the Sources reader is toggled on). */
+/* Build the "Source:" line, adding a Jump chip per cited page (hidden by CSS unless the reader is on). */
 function renderSourceLine(source, qIndex){
     const parsed = pdfParseCitations(source||'');
     _citeCache[qIndex] = parsed;
@@ -2337,32 +2342,32 @@ function loadPdf(entry){
     return p.catch(err=>{ delete _pdfCache[entry.file]; throw err; });
 }
 
-/* small non-blocking loading pill (auto-hides so it can never linger) */
 function pdfShowLoading(msg){ const el=document.getElementById('pdf-loading'); if(!el) return; el.textContent=msg; el.classList.remove('pdf-hidden'); if(_pdfLoadTimer) clearTimeout(_pdfLoadTimer); _pdfLoadTimer=setTimeout(()=>el.classList.add('pdf-hidden'), 6000); }
 function pdfShowError(msg){ const el=document.getElementById('pdf-loading'); if(!el) return; el.textContent=msg; el.classList.remove('pdf-hidden'); if(_pdfLoadTimer){ clearTimeout(_pdfLoadTimer); _pdfLoadTimer=null; } }
 function pdfHideLoading(){ const el=document.getElementById('pdf-loading'); if(el) el.classList.add('pdf-hidden'); if(_pdfLoadTimer){ clearTimeout(_pdfLoadTimer); _pdfLoadTimer=null; } }
 
 async function showSource(entry){
-    pdfView.entry=entry; buildPdfTabs();
+    pdfView.entry=entry; pdfView.dims={}; buildPdfTabs();
     document.getElementById('pdf-pages').innerHTML='';
     pdfShowLoading('Loading '+(entry.title||entry.file)+'…');
     let pdf;
     try{ pdf=await loadPdf(entry); }
     catch(err){ pdfShowError('Couldn’t load “'+entry.file+'”. Make sure that file exists next to this page and that you’re viewing over http/https (not a local file).'); return; }
     pdfView.pdf=pdf; pdfView.numPages=pdf.numPages;
-    try{ const p1=await pdf.getPage(1); const base=p1.getViewport({scale:1}); pdfView.baseW=base.width; pdfView.baseH=base.height; }catch(e){ pdfView.baseW=612; pdfView.baseH=792; }
-    pdfComputeFit();
+    try{ const p1=await pdf.getPage(1); const base=p1.getViewport({scale:1}); pdfView.baseW=base.width; pdfView.baseH=base.height; pdfView.dims[1]={w:base.width,h:base.height}; }catch(e){ pdfView.baseW=612; pdfView.baseH=792; }
+    const avail=pdfAvail('w'); if(pdfView.baseW>0 && avail>60) pdfView.scale=pdfClampScale(avail/pdfView.baseW);
     buildPages();
     pdfView.page=1; pdfUpdatePageInput();
     pdfHideLoading();
 }
-function pdfComputeFit(){ const sc=document.getElementById('pdf-scroll'); const avail=((sc&&sc.clientWidth)||520)-24; if(pdfView.baseW>0 && avail>60) pdfView.scale=Math.max(0.3, Math.min(4, avail/pdfView.baseW)); }
+function pdfClampScale(s){ return Math.max(0.3, Math.min(5, s)); }
+function pdfAvail(dim){ const sc=document.getElementById('pdf-scroll'); if(!sc) return 500; return (dim==='h' ? sc.clientHeight : sc.clientWidth) - 26; }
+function pdfDims(i){ return pdfView.dims[i] || { w:pdfView.baseW||612, h:pdfView.baseH||792 }; }
 function buildPages(){
     const el=document.getElementById('pdf-pages'); if(!el) return;
     if(pdfView.observer) pdfView.observer.disconnect();
     el.innerHTML=''; pdfView.rendered=new Set();
-    const W=Math.round(pdfView.baseW*pdfView.scale), H=Math.round(pdfView.baseH*pdfView.scale);
-    for(let i=1;i<=pdfView.numPages;i++){ const d=document.createElement('div'); d.className='pdf-page'; d.dataset.page=i; d.style.width=W+'px'; d.style.height=H+'px'; el.appendChild(d); }
+    for(let i=1;i<=pdfView.numPages;i++){ const d0=pdfDims(i); const d=document.createElement('div'); d.className='pdf-page'; d.dataset.page=i; d.style.width=Math.round(d0.w*pdfView.scale)+'px'; d.style.height=Math.round(d0.h*pdfView.scale)+'px'; el.appendChild(d); }
     const root=document.getElementById('pdf-scroll');
     pdfView.observer=new IntersectionObserver((ents)=>{ ents.forEach(en=>{ if(en.isIntersecting) renderOnePage(+en.target.dataset.page, en.target); }); }, { root, rootMargin:'700px 0px' });
     el.querySelectorAll('.pdf-page').forEach(d=>pdfView.observer.observe(d));
@@ -2372,22 +2377,29 @@ async function renderOnePage(i, div){
     let pdf; try{ pdf=await loadPdf(pdfView.entry); }catch(e){ pdfView.rendered.delete(i); return; }
     let pg; try{ pg=await pdf.getPage(i); }catch(e){ return; }
     const vp=pg.getViewport({scale:pdfView.scale});
+    pdfView.dims[i]={ w:vp.width/pdfView.scale, h:vp.height/pdfView.scale };
     const canvas=document.createElement('canvas'); canvas.width=vp.width; canvas.height=vp.height;
     div.style.width=vp.width+'px'; div.style.height=vp.height+'px'; div.innerHTML=''; div.appendChild(canvas);
     try{ await pg.render({canvasContext:canvas.getContext('2d'), viewport:vp}).promise; }catch(e){}
 }
-function jumpToPage(i){
+async function jumpToPage(i){
     i=Math.max(1, Math.min(pdfView.numPages, i||1));
     const div=document.querySelector('#pdf-pages .pdf-page[data-page="'+i+'"]');
-    const sc=document.getElementById('pdf-scroll');
-    if(div && sc) sc.scrollTop = div.offsetTop - 6;
+    if(div){ await renderOnePage(i, div); const sc=document.getElementById('pdf-scroll'); if(sc) sc.scrollTop = div.offsetTop - 6; }
     pdfView.page=i; pdfUpdatePageInput();
 }
 function pdfUpdatePageInput(){ const inp=document.getElementById('pdf-pagenum'); if(inp) inp.value=pdfView.page; const tot=document.getElementById('pdf-pagetot'); if(tot) tot.textContent='/ '+pdfView.numPages; }
 function pdfOnScroll(){ const sc=document.getElementById('pdf-scroll'); if(!sc) return; const y=sc.scrollTop+24; const pages=sc.querySelectorAll('.pdf-page'); let cur=1; for(const d of pages){ if(d.offsetTop<=y) cur=+d.dataset.page; else break; } if(cur!==pdfView.page){ pdfView.page=cur; pdfUpdatePageInput(); } }
 function pdfReflow(keep){ const cur=keep||pdfView.page; buildPages(); jumpToPage(cur); }
-function fitPdf(){ if(!pdfView.entry) return; pdfComputeFit(); pdfReflow(pdfView.page); }
-function pdfZoom(d){ if(!pdfView.entry) return; pdfView.scale=Math.max(0.3, Math.min(4, pdfView.scale+d)); pdfReflow(pdfView.page); }
+async function fitMode(mode){
+    if(!pdfView.entry) return;
+    let nat=pdfView.dims[pdfView.page];
+    if(!nat){ try{ const pdf=await loadPdf(pdfView.entry); const pg=await pdf.getPage(pdfView.page); const vp=pg.getViewport({scale:1}); nat={w:vp.width,h:vp.height}; pdfView.dims[pdfView.page]=nat; }catch(e){ return; } }
+    pdfView.scale = pdfClampScale(mode==='height' ? pdfAvail('h')/nat.h : pdfAvail('w')/nat.w);
+    pdfReflow(pdfView.page);
+}
+function fitPdf(){ fitMode('width'); }
+function pdfZoom(d){ if(!pdfView.entry) return; pdfView.scale=pdfClampScale(pdfView.scale+d); pdfReflow(pdfView.page); }
 
 async function openCitation(entry, page){ setReaderOpen(true); if(pdfView.entry!==entry){ await showSource(entry); } jumpToPage(page); }
 function setReaderOpen(on){ document.body.classList.toggle('pdf-open', on); const btn=document.getElementById('pdf-btn'); if(btn){ btn.classList.toggle('on', on); btn.setAttribute('aria-pressed', on?'true':'false'); } localStorage.setItem('bb_pdfReaderOpen', on?'true':'false'); }
@@ -2428,7 +2440,8 @@ function initPdfResizer(){
     document.getElementById('pdf-pagenum').addEventListener('change',(e)=>{ const p=parseInt(e.target.value,10); if(p) jumpToPage(p); });
     document.getElementById('pdf-zoomin').addEventListener('click',()=>pdfZoom(0.2));
     document.getElementById('pdf-zoomout').addEventListener('click',()=>pdfZoom(-0.2));
-    document.getElementById('pdf-fit').addEventListener('click',fitPdf);
+    document.getElementById('pdf-fitw').addEventListener('click',()=>fitMode('width'));
+    document.getElementById('pdf-fith').addEventListener('click',()=>fitMode('height'));
     document.getElementById('pdf-collapse').addEventListener('click',togglePdfToolbar);
     const sc=document.getElementById('pdf-scroll'); if(sc) sc.addEventListener('scroll',()=>{ clearTimeout(pdfView._st); pdfView._st=setTimeout(pdfOnScroll,90); });
     if(localStorage.getItem('bb_pdfToolbarCollapsed')==='true') document.getElementById('pdf-panel').classList.add('tb-collapsed');
