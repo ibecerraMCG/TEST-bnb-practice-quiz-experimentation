@@ -2263,7 +2263,7 @@ const PDF_SOURCES = [
 let pdfjsLib = null;
 const _pdfCache = {};      // file -> Promise<pdf>
 const _citeCache = {};     // question index -> parsed citation
-const pdfView = { entry:null, pdf:null, numPages:1, scale:1.2, baseW:0, baseH:0, page:1, dims:{}, rendered:new Set(), observer:null, _st:null };
+const pdfView = { entry:null, pdf:null, numPages:1, scale:1.2, baseW:0, baseH:0, page:1, dims:{}, fit:'width', rendered:new Set(), observer:null, _st:null };
 let _pdfLoadTimer = null;
 
 function pdfNormTitle(t){ return String(t||'').toLowerCase().replace(/\bpdf\b/g,'').replace(/[^a-z0-9]+/g,' ').trim(); }
@@ -2355,7 +2355,7 @@ async function showSource(entry){
     catch(err){ pdfShowError('Couldn’t load “'+entry.file+'”. Make sure that file exists next to this page and that you’re viewing over http/https (not a local file).'); return; }
     pdfView.pdf=pdf; pdfView.numPages=pdf.numPages;
     try{ const p1=await pdf.getPage(1); const base=p1.getViewport({scale:1}); pdfView.baseW=base.width; pdfView.baseH=base.height; pdfView.dims[1]={w:base.width,h:base.height}; }catch(e){ pdfView.baseW=612; pdfView.baseH=792; }
-    const avail=pdfAvail('w'); if(pdfView.baseW>0 && avail>60) pdfView.scale=pdfClampScale(avail/pdfView.baseW);
+    const avail=pdfAvail('w'); if(pdfView.baseW>0 && avail>60) pdfView.scale=pdfClampScale(avail/pdfView.baseW); pdfView.fit='width';
     buildPages();
     pdfView.page=1; pdfUpdatePageInput();
     pdfHideLoading();
@@ -2393,20 +2393,21 @@ function pdfOnScroll(){ const sc=document.getElementById('pdf-scroll'); if(!sc) 
 function pdfReflow(keep){ const cur=keep||pdfView.page; buildPages(); jumpToPage(cur); }
 async function fitMode(mode){
     if(!pdfView.entry) return;
+    pdfView.fit=mode;
     let nat=pdfView.dims[pdfView.page];
     if(!nat){ try{ const pdf=await loadPdf(pdfView.entry); const pg=await pdf.getPage(pdfView.page); const vp=pg.getViewport({scale:1}); nat={w:vp.width,h:vp.height}; pdfView.dims[pdfView.page]=nat; }catch(e){ return; } }
     pdfView.scale = pdfClampScale(mode==='height' ? pdfAvail('h')/nat.h : pdfAvail('w')/nat.w);
     pdfReflow(pdfView.page);
 }
 function fitPdf(){ fitMode('width'); }
-function pdfZoom(d){ if(!pdfView.entry) return; pdfView.scale=pdfClampScale(pdfView.scale+d); pdfReflow(pdfView.page); }
+function pdfZoom(d){ if(!pdfView.entry) return; pdfView.fit=null; pdfView.scale=pdfClampScale(pdfView.scale+d); pdfReflow(pdfView.page); }
 
 async function openCitation(entry, page){ setReaderOpen(true); if(pdfView.entry!==entry){ await showSource(entry); } jumpToPage(page); }
 function setReaderOpen(on){ document.body.classList.toggle('pdf-open', on); const btn=document.getElementById('pdf-btn'); if(btn){ btn.classList.toggle('on', on); btn.setAttribute('aria-pressed', on?'true':'false'); } localStorage.setItem('bb_pdfReaderOpen', on?'true':'false'); }
 function togglePdfReader(force){
     const on=(typeof force==='boolean')?force:!document.body.classList.contains('pdf-open');
     setReaderOpen(on);
-    if(on){ if(!pdfView.entry){ const first=PDF_SOURCES.find(e=>e&&e.file); if(first) showSource(first); else pdfShowError('No source PDFs are configured for this quiz yet.'); } else { fitPdf(); } }
+    if(on){ if(!pdfView.entry){ const first=PDF_SOURCES.find(e=>e&&e.file); if(first) showSource(first); else pdfShowError('No source PDFs are configured for this quiz yet.'); } else { fitMode(pdfView.fit||'width'); } }
 }
 function pdfTabLabel(e){ return (e.title||e.file).replace(/\s*PDF\s*$/i,'').replace(/^.*\//,''); }
 function buildPdfTabs(){
@@ -2417,7 +2418,7 @@ function buildPdfTabs(){
         b.addEventListener('click', ()=>{ if(pdfView.entry===e){ jumpToPage(1); return; } showSource(e); });
         box.appendChild(b); });
 }
-function togglePdfToolbar(){ const panel=document.getElementById('pdf-panel'); const c=panel.classList.toggle('tb-collapsed'); localStorage.setItem('bb_pdfToolbarCollapsed', c?'true':'false'); }
+function togglePdfToolbar(){ const panel=document.getElementById('pdf-panel'); const c=panel.classList.toggle('tb-collapsed'); localStorage.setItem('bb_pdfToolbarCollapsed', c?'true':'false'); if(pdfView.entry && pdfView.fit) requestAnimationFrame(()=>fitMode(pdfView.fit)); }
 function initPdfResizer(){
     const resizer=document.getElementById('pdf-resizer'); if(!resizer) return;
     const root=document.documentElement; const KEY='bb_pdfWidth'; const MIN=340, DEF=620;
@@ -2427,9 +2428,9 @@ function initPdfResizer(){
     let startX=0,startW=0,dragging=false;
     const cur=()=>{ const v=parseInt(getComputedStyle(root).getPropertyValue('--pdf-width'),10); return isNaN(v)?DEF:v; };
     const move=(e)=>{ if(!dragging) return; const w=Math.max(MIN, Math.min(cap(), startW-(e.clientX-startX))); root.style.setProperty('--pdf-width', w+'px'); };
-    const up=()=>{ if(!dragging) return; dragging=false; document.body.classList.remove('pdf-resizing'); window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); localStorage.setItem(KEY,cur()); if(pdfView.entry) fitPdf(); };
+    const up=()=>{ if(!dragging) return; dragging=false; document.body.classList.remove('pdf-resizing'); window.removeEventListener('pointermove',move); window.removeEventListener('pointerup',up); localStorage.setItem(KEY,cur()); if(pdfView.entry) fitMode(pdfView.fit||'width'); };
     resizer.addEventListener('pointerdown',(e)=>{ if(window.innerWidth<=1000) return; e.preventDefault(); dragging=true; startX=e.clientX; startW=cur(); document.body.classList.add('pdf-resizing'); window.addEventListener('pointermove',move); window.addEventListener('pointerup',up); });
-    resizer.addEventListener('dblclick',()=>{ root.style.setProperty('--pdf-width', DEF+'px'); localStorage.setItem(KEY,DEF); if(pdfView.entry) fitPdf(); });
+    resizer.addEventListener('dblclick',()=>{ root.style.setProperty('--pdf-width', DEF+'px'); localStorage.setItem(KEY,DEF); if(pdfView.entry) fitMode(pdfView.fit||'width'); });
 }
 (function initPdfReader(){
     const btn=document.getElementById('pdf-btn'); const mobile=window.innerWidth<=820;
@@ -2459,7 +2460,7 @@ function initPdfResizer(){
     if (!resizer) return;
     const root = document.documentElement;
     const KEY = 'bb_quizSidebarWidth';
-    const MIN = 216, MAX = 480, DEFAULT = 288;
+    const MIN = 150, MAX = 480, DEFAULT = 288;
 
     // Restore a saved width on load (desktop only — sidebar is an overlay on mobile).
     const saved = parseInt(localStorage.getItem(KEY), 10);
