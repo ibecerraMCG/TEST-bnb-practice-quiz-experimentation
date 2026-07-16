@@ -2032,7 +2032,15 @@ function changeTheme(name, openPicker) {
     } else {
         root.setAttribute('data-theme', name);
         customBuilder.classList.remove('active');
+        // Preserve layout custom-properties (persisted sidebar / PDF widths + header height)
+        // so applying a built-in theme doesn't wipe the restored sidebar width.
+        const _sw = root.style.getPropertyValue('--sidebar-width');
+        const _pw = root.style.getPropertyValue('--pdf-width');
+        const _hh = root.style.getPropertyValue('--header-height');
         root.removeAttribute('style');
+        if (_sw) root.style.setProperty('--sidebar-width', _sw);
+        if (_pw) root.style.setProperty('--pdf-width', _pw);
+        if (_hh) root.style.setProperty('--header-height', _hh);
     }
 }
 themeSelect.addEventListener('change', e => changeTheme(e.target.value, true));
