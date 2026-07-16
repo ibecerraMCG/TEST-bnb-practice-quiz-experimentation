@@ -783,6 +783,9 @@
     .option-label.eliminated { opacity: 0.5; }
     .option-label.eliminated .opt-text { text-decoration: line-through; text-decoration-thickness: 2px; }
     .option-label.eliminated .opt-key { opacity: 0.6; }
+    /* keep press-and-hold-to-eliminate from starting a text selection / callout on touch
+       (text selection is still allowed while the highlighter is on) */
+    body:not(.hl-mode) .option-label { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 
     .retry-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 1.4rem; padding: 0.85rem 1.1rem; border-radius: 12px; background: var(--bg-active); border: 1px solid var(--border-color); font-size: 0.88rem; color: var(--text-main); }
 
@@ -1123,6 +1126,13 @@
                 <p class="help-tip">Turn the highlighter on with the <b>marker button</b> in the header (or press <kbd>H</kbd>). While it's on, <b>select any text</b> in a question stem to highlight it.</p>
                 <p class="help-tip"><b>Click a highlight</b> to remove it.</p>
             </div>
+
+            <div class="help-section">
+                <h3>Source PDFs</h3>
+                <p class="help-tip">Turn on <b>Sources</b> (the document button in the header, or press <kbd>V</kbd>) to open a reader for the cited source PDFs beside the questions. On phones it's hidden, since full PDFs aren't practical to read there.</p>
+                <p class="help-tip">Once a question is revealed, its <b>&ldquo;Source:&rdquo;</b> line shows a small <b>page (or slide) button</b> for each cited page &mdash; click one to open that PDF and jump straight to the cited page. If a citation lists several pages, you get a button for each.</p>
+                <p class="help-tip">In the reader, use the <b>tabs</b> to switch between sources, scroll through the pages or type a page number, use <b>Fit&nbsp;W</b> / <b>Fit&nbsp;H</b> to fit a page to the width or height, and the <b>&#9650; button</b> to collapse the top bar for more room.</p>
+            </div>
             <div class="help-section">
                 <h3>Strike through / eliminate answers</h3>
                 <p class="help-tip"><b>Right-click</b> an answer choice (on a computer) or <b>press and hold</b> it (on a touch screen) to cross it out as eliminated. Repeat to bring it back.</p>
@@ -1249,8 +1259,7 @@ function renderQuiz() {
             if (strikes[index] && strikes[index][key]) label.classList.add('eliminated');
             label.innerHTML = `<span class="opt-key">${key}</span><span class="opt-text">${escapeHtml(value)}</span>`;
             label.onclick = () => selectOption(index, key);
-            // right-click / long-press to eliminate (strike through)
-            label.addEventListener('contextmenu', ev => { ev.preventDefault(); toggleStrike(index, key); });
+            // right-click (desktop) / press-and-hold (touch) to eliminate (strike through)
             attachLongPress(label, () => toggleStrike(index, key));
             grid.appendChild(label);
         }
@@ -2528,14 +2537,38 @@ function toggleStrike(index, key) {
     if (label) label.classList.toggle('eliminated', !!(strikes[index] && strikes[index][key]));
 }
 
-/* Long-press (mobile) helper for strikethrough */
+/* Press-and-hold (touch) / right-click (desktop) to eliminate an option.
+   Both are handled here so they can't double-fire and cancel out (Android fires a
+   contextmenu on long-press in addition to our timer). */
+let _lastStrikeLongPress = 0, _lastStrikeEl = null;
+// A hold triggers a follow-up tap-"click" that would also select the option — swallow it.
+document.addEventListener('click', (e) => {
+    const lab = e.target.closest && e.target.closest('.option-label');
+    if (lab && lab === _lastStrikeEl && Date.now() - _lastStrikeLongPress < 700) {
+        e.stopPropagation(); e.preventDefault();
+    }
+}, true);
 function attachLongPress(el, cb) {
-    let timer = null;
-    const start = () => { timer = setTimeout(() => { timer = null; cb(); }, 500); };
-    const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
-    el.addEventListener('touchstart', start, { passive: true });
-    el.addEventListener('touchend', cancel);
-    el.addEventListener('touchmove', cancel);
+    let timer = null, sx = 0, sy = 0;
+    const clear = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    el.addEventListener('touchstart', (e) => {
+        if (e.touches.length !== 1) { clear(); return; }
+        sx = e.touches[0].clientX; sy = e.touches[0].clientY;
+        clear();
+        timer = setTimeout(() => {
+            timer = null; _lastStrikeLongPress = Date.now(); _lastStrikeEl = el; cb();
+            try { navigator.vibrate && navigator.vibrate(18); } catch (_) {}
+        }, 450);
+    }, { passive: true });
+    el.addEventListener('touchmove', (e) => {
+        if (!timer) return;
+        const t = e.touches[0];
+        if (Math.abs(t.clientX - sx) > 12 || Math.abs(t.clientY - sy) > 12) clear();   // tolerate small jitter
+    }, { passive: true });
+    el.addEventListener('touchend', clear);
+    el.addEventListener('touchcancel', clear);
+    // desktop right-click; also swallow the duplicate contextmenu Android fires after a long-press
+    el.addEventListener('contextmenu', (e) => { e.preventDefault(); if (el === _lastStrikeEl && Date.now() - _lastStrikeLongPress < 700) return; cb(); });
 }
 
 /* ============================================================
