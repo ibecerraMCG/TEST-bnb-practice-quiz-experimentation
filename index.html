@@ -836,7 +836,10 @@
     .pdf-xbtn { flex-shrink: 0; align-self: center; width: 30px; height: 30px; border-radius: 8px; cursor: pointer;
         background: none; border: 1px solid var(--border-color); color: var(--text-main); font-size: 0.95rem; margin-bottom: 6px; }
     .pdf-xbtn:hover { border-color: var(--text-accent); color: var(--text-accent); }
+    #pdf-collapse { transition: transform .15s; }
+    #pdf-panel.tb-collapsed #pdf-collapse { transform: rotate(180deg); }
     .pdf-toolbar { display: flex; align-items: center; gap: 5px; padding: 8px 10px; border-top: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle); flex-wrap: wrap; }
+    #pdf-panel.tb-collapsed .pdf-toolbar { display: none; }
     .pdf-tbtn { font-family: var(--font-main); font-weight: 700; cursor: pointer; background: var(--bg-input);
         border: 1px solid var(--border-color); color: var(--text-main); border-radius: 7px; padding: 5px 10px; font-size: 0.85rem; }
     .pdf-tbtn:hover { border-color: var(--text-accent); }
@@ -844,10 +847,16 @@
         background: var(--bg-input); border: 1px solid var(--border-color); color: var(--text-main); border-radius: 7px; }
     .pdf-pagetot { font-size: 0.78rem; color: var(--text-muted); }
     .pdf-tb-sep { flex: 1; }
-    .pdf-canvas-wrap { flex: 1; overflow: auto; background: #3b3b3b; display: flex; justify-content: center; align-items: flex-start; padding: 12px; }
-    #pdf-canvas { max-width: none; height: auto; box-shadow: 0 4px 18px rgba(0,0,0,0.45); background: #fff; }
-    .pdf-empty { color: var(--text-muted); font-size: 0.85rem; text-align: center; padding: 40px 16px; line-height: 1.6; }
+    .pdf-scroll { flex: 1; overflow: auto; background: #3b3b3b; position: relative; padding: 12px 0; }
+    #pdf-pages { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+    .pdf-page { background: #fff; box-shadow: 0 4px 18px rgba(0,0,0,0.45); }
+    .pdf-page canvas { display: block; }
+    .pdf-loading { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 6;
+        background: var(--bg-card); color: var(--text-muted); font-size: 0.8rem; padding: 6px 14px;
+        border: 1px solid var(--border-color); border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,0.35); max-width: 88%; text-align: center; }
+    .pdf-hidden { display: none !important; }
     .cite-jump { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    body:not(.pdf-open) .cite-jump { display: none; }
     .cite-jump-l { font-size: 0.76rem; color: var(--text-muted); }
     .cite-page { font-family: var(--font-main); font-size: 0.76rem; font-weight: 700; cursor: pointer;
         background: var(--bg-active); color: var(--text-accent); border: 1px solid var(--text-accent);
@@ -859,7 +868,11 @@
         body.pdf-open #pdf-panel { display: flex; position: fixed; inset: calc(var(--header-height) + 6px) 2vw 2vw 2vw;
             width: auto; max-width: none; height: auto; margin: 0; z-index: 300; }
     }
-
+    @media (max-width: 820px) {
+        #pdf-btn { display: none !important; }
+        #pdf-panel, #pdf-resizer { display: none !important; }
+        .cite-jump { display: none !important; }
+    }
 </style>
 </head>
 
@@ -1049,21 +1062,22 @@
     <aside id="pdf-panel" aria-label="Source PDF reader">
         <div class="pdf-head">
             <div class="pdf-tabs" id="pdf-tabs"></div>
-            <button id="pdf-close" class="pdf-xbtn" title="Hide reader (V)" aria-label="Hide reader" onclick="togglePdfReader(false)">✕</button>
+            <button id="pdf-collapse" class="pdf-xbtn" title="Collapse / expand the toolbar" aria-label="Collapse toolbar">&#9650;</button>
+            <button id="pdf-close" class="pdf-xbtn" title="Hide reader (V)" aria-label="Hide reader" onclick="togglePdfReader(false)">&#10005;</button>
         </div>
-        <div class="pdf-toolbar">
-            <button id="pdf-prev" class="pdf-tbtn" title="Previous page" aria-label="Previous page">‹</button>
+        <div class="pdf-toolbar" id="pdf-toolbar">
+            <button id="pdf-prev" class="pdf-tbtn" title="Previous page" aria-label="Previous page">&#8249;</button>
             <input id="pdf-pagenum" class="pdf-pageinput" type="text" value="" aria-label="Page number">
             <span class="pdf-pagetot" id="pdf-pagetot"></span>
-            <button id="pdf-next" class="pdf-tbtn" title="Next page" aria-label="Next page">›</button>
+            <button id="pdf-next" class="pdf-tbtn" title="Next page" aria-label="Next page">&#8250;</button>
             <span class="pdf-tb-sep"></span>
-            <button id="pdf-zoomout" class="pdf-tbtn" title="Zoom out" aria-label="Zoom out">–</button>
+            <button id="pdf-zoomout" class="pdf-tbtn" title="Zoom out" aria-label="Zoom out">&#8211;</button>
             <button id="pdf-zoomin" class="pdf-tbtn" title="Zoom in" aria-label="Zoom in">+</button>
             <button id="pdf-fit" class="pdf-tbtn" title="Fit page width">Fit</button>
         </div>
-        <div class="pdf-canvas-wrap" id="pdf-canvas-wrap">
-            <div class="pdf-empty" id="pdf-empty">Loading…</div>
-            <canvas id="pdf-canvas" class="hidden"></canvas>
+        <div class="pdf-scroll" id="pdf-scroll">
+            <div class="pdf-loading pdf-hidden" id="pdf-loading">Loading&#8230;</div>
+            <div id="pdf-pages"></div>
         </div>
     </aside>
 </div>
@@ -2243,14 +2257,10 @@ const PDF_SOURCES = [
 let pdfjsLib = null;
 const _pdfCache = {};      // file -> Promise<pdf>
 const _citeCache = {};     // question index -> parsed citation
-const pdfView = { entry: null, page: 1, scale: 1.2, numPages: 1, quotes: [] };
+const pdfView = { entry:null, pdf:null, numPages:1, scale:1.2, baseW:0, baseH:0, page:1, rendered:new Set(), observer:null, _st:null };
+let _pdfLoadTimer = null;
 
 function pdfNormTitle(t){ return String(t||'').toLowerCase().replace(/\bpdf\b/g,'').replace(/[^a-z0-9]+/g,' ').trim(); }
-function pdfAlnum(s){ return String(s||'').toLowerCase().replace(/[‘’“”]/g,'').replace(/[^a-z0-9]+/g,''); }
-const PDF_STOPQ = new Set('the and for are was that this with from have has had not but you your our its his her she him who whom whose what when where why how all any some each both into onto over under out off per via etc'.split(/\s+/));
-function pdfTokensOf(text){ return String(text||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').split(/\s+/).filter(Boolean); }
-function pdfQuoteTokens(quote){ return [...new Set(pdfTokensOf(quote).filter(w=>w.length>=3 && !PDF_STOPQ.has(w)))]; }
-function pdfFragments(quote){ return String(quote).split(/\s*(?:\.\.\.|…|\.\.)\s*/).map(f=>pdfAlnum(f)).filter(f=>f.length>=5); }
 function pdfParseRef(inner){
     const kw=inner.match(/\b(pages?|slides?|pp?\.?|p\.)\b/i);
     let title=inner, pages=[];
@@ -2259,11 +2269,11 @@ function pdfParseRef(inner){
     return { title, titleKey:pdfNormTitle(title), pages, raw:inner, unit:(/slide/i.test(inner)?'Slide':'Page') };
 }
 function pdfParseCitations(src){
-    const out={refs:[], quotes:[]}; if(!src) return out;
+    const out={refs:[]}; if(!src) return out;
     let m; const spans=[];
     const qre=/(^|[\s(:\[\-—,])[‘'"]([\s\S]{4,}?)[’'"](?=$|[\s).,;:\]!?(—])/g;
-    while((m=qre.exec(src))){ const t=m[2].trim(); if(t.length>=4){ out.quotes.push(t); spans.push([m.index, qre.lastIndex]); } }
-    if(out.quotes.length===0){ const q2=/[‘'"]([\s\S]{4,}?)[’'"]/g; while((m=q2.exec(src))){ const t=m[1].trim(); if(t.length>=4){ out.quotes.push(t); spans.push([m.index, q2.lastIndex]); } } }
+    while((m=qre.exec(src))){ if(m[2].trim().length>=4) spans.push([m.index, qre.lastIndex]); }
+    if(spans.length===0){ const q2=/[‘'"]([\s\S]{4,}?)[’'"]/g; while((m=q2.exec(src))){ if(m[1].trim().length>=4) spans.push([m.index, q2.lastIndex]); } }
     const pre=/\(([^()]*)\)/g;
     while((m=pre.exec(src))){ const inner=m[1]; if(!/\b(pdf|page|pages|slide|slides|deck|doc)\b/i.test(inner)) continue; out.refs.push(pdfParseRef(inner)); }
     if(out.refs.length===0){
@@ -2279,7 +2289,8 @@ function pdfParseCitations(src){
 function pdfHasSources(){ return PDF_SOURCES.some(e=>e && e.file); }
 function pdfResolve(titleKey){ for(let i=0;i<PDF_SOURCES.length;i++){ const e=PDF_SOURCES[i]; if(e && e.file && pdfNormTitle(e.title)===titleKey) return { entry:e, index:i }; } return null; }
 
-/* Build the "Source:" line with clickable page/slide chips */
+/* Build the "Source:" line, adding a Jump chip per cited page (chips are hidden by CSS
+   unless the Sources reader is toggled on). */
 function renderSourceLine(source, qIndex){
     const parsed = pdfParseCitations(source||'');
     _citeCache[qIndex] = parsed;
@@ -2289,9 +2300,7 @@ function renderSourceLine(source, qIndex){
         parsed.refs.forEach((ref, ri)=>{
             const hit = pdfResolve(ref.titleKey); if(!hit) return;
             const pages = ref.pages.length ? ref.pages : [1];
-            pages.forEach(pg=>{
-                chips.push('<button type="button" class="cite-page" data-qi="'+qIndex+'" data-ri="'+ri+'" data-page="'+pg+'" title="Open “'+escapeHtml(hit.entry.title)+'” at '+ref.unit.toLowerCase()+' '+pg+' and highlight the cited text">📄 '+ref.unit+' '+pg+'</button>');
-            });
+            pages.forEach(pg=>{ chips.push('<button type="button" class="cite-page" data-qi="'+qIndex+'" data-ri="'+ri+'" data-page="'+pg+'" title="Open “'+escapeHtml(hit.entry.title)+'” at '+ref.unit.toLowerCase()+' '+pg+'">📄 '+ref.unit+' '+pg+'</button>'); });
         });
     }
     if(chips.length) html += '<div class="cite-jump"><span class="cite-jump-l">Jump to source:</span>'+chips.join('')+'</div>';
@@ -2304,7 +2313,7 @@ document.addEventListener('click', function(e){
     const parsed=_citeCache[qi]; if(!parsed) return;
     const ref=parsed.refs[ri]; if(!ref) return;
     const hit=pdfResolve(ref.titleKey); if(!hit) return;
-    openCitation(hit.entry, page, parsed.quotes);
+    openCitation(hit.entry, page);
 });
 
 function loadPdfJs(){
@@ -2327,58 +2336,65 @@ function loadPdf(entry){
     _pdfCache[entry.file]=p;
     return p.catch(err=>{ delete _pdfCache[entry.file]; throw err; });
 }
-async function openCitation(entry, page, quotes){ togglePdfReader(true); pdfView.quotes = quotes||[]; await showSource(entry, page); }
-async function showSource(entry, page){
+
+/* small non-blocking loading pill (auto-hides so it can never linger) */
+function pdfShowLoading(msg){ const el=document.getElementById('pdf-loading'); if(!el) return; el.textContent=msg; el.classList.remove('pdf-hidden'); if(_pdfLoadTimer) clearTimeout(_pdfLoadTimer); _pdfLoadTimer=setTimeout(()=>el.classList.add('pdf-hidden'), 6000); }
+function pdfShowError(msg){ const el=document.getElementById('pdf-loading'); if(!el) return; el.textContent=msg; el.classList.remove('pdf-hidden'); if(_pdfLoadTimer){ clearTimeout(_pdfLoadTimer); _pdfLoadTimer=null; } }
+function pdfHideLoading(){ const el=document.getElementById('pdf-loading'); if(el) el.classList.add('pdf-hidden'); if(_pdfLoadTimer){ clearTimeout(_pdfLoadTimer); _pdfLoadTimer=null; } }
+
+async function showSource(entry){
     pdfView.entry=entry; buildPdfTabs();
-    const empty=document.getElementById('pdf-empty'), canvas=document.getElementById('pdf-canvas');
-    empty.classList.remove('hidden'); empty.textContent='Loading '+(entry.title||entry.file)+'…'; canvas.classList.add('hidden');
+    document.getElementById('pdf-pages').innerHTML='';
+    pdfShowLoading('Loading '+(entry.title||entry.file)+'…');
     let pdf;
     try{ pdf=await loadPdf(entry); }
-    catch(err){ empty.classList.remove('hidden'); empty.innerHTML='Couldn’t load this source:<br><b>'+escapeHtml(entry.file)+'</b><br><br>Make sure that file exists next to this page (and that you’re viewing this over http/https, not a local file).'; canvas.classList.add('hidden'); return; }
-    pdfView.numPages=pdf.numPages; pdfView.page=Math.max(1, Math.min(page||1, pdf.numPages));
-    await fitPdf();
-    const wrap=document.getElementById('pdf-canvas-wrap'); if(wrap) wrap.scrollTop=0;
+    catch(err){ pdfShowError('Couldn’t load “'+entry.file+'”. Make sure that file exists next to this page and that you’re viewing over http/https (not a local file).'); return; }
+    pdfView.pdf=pdf; pdfView.numPages=pdf.numPages;
+    try{ const p1=await pdf.getPage(1); const base=p1.getViewport({scale:1}); pdfView.baseW=base.width; pdfView.baseH=base.height; }catch(e){ pdfView.baseW=612; pdfView.baseH=792; }
+    pdfComputeFit();
+    buildPages();
+    pdfView.page=1; pdfUpdatePageInput();
+    pdfHideLoading();
 }
-async function renderPdfPage(){
-    const entry=pdfView.entry; if(!entry) return;
-    let pdf; try{ pdf=await loadPdf(entry); }catch(e){ return; }
-    const pg=await pdf.getPage(pdfView.page);
-    const viewport=pg.getViewport({scale:pdfView.scale});
-    const canvas=document.getElementById('pdf-canvas'), empty=document.getElementById('pdf-empty');
-    canvas.classList.remove('hidden'); empty.classList.add('hidden');
-    canvas.width=viewport.width; canvas.height=viewport.height;
-    const ctx=canvas.getContext('2d');
-    await pg.render({canvasContext:ctx, viewport}).promise;
-    try{ await pdfDrawHighlights(ctx, pg, viewport, pdfView.quotes); }catch(e){}
-    document.getElementById('pdf-pagenum').value=pdfView.page;
-    document.getElementById('pdf-pagetot').textContent='/ '+pdfView.numPages;
+function pdfComputeFit(){ const sc=document.getElementById('pdf-scroll'); const avail=((sc&&sc.clientWidth)||520)-24; if(pdfView.baseW>0 && avail>60) pdfView.scale=Math.max(0.3, Math.min(4, avail/pdfView.baseW)); }
+function buildPages(){
+    const el=document.getElementById('pdf-pages'); if(!el) return;
+    if(pdfView.observer) pdfView.observer.disconnect();
+    el.innerHTML=''; pdfView.rendered=new Set();
+    const W=Math.round(pdfView.baseW*pdfView.scale), H=Math.round(pdfView.baseH*pdfView.scale);
+    for(let i=1;i<=pdfView.numPages;i++){ const d=document.createElement('div'); d.className='pdf-page'; d.dataset.page=i; d.style.width=W+'px'; d.style.height=H+'px'; el.appendChild(d); }
+    const root=document.getElementById('pdf-scroll');
+    pdfView.observer=new IntersectionObserver((ents)=>{ ents.forEach(en=>{ if(en.isIntersecting) renderOnePage(+en.target.dataset.page, en.target); }); }, { root, rootMargin:'700px 0px' });
+    el.querySelectorAll('.pdf-page').forEach(d=>pdfView.observer.observe(d));
 }
-async function fitPdf(){
-    const entry=pdfView.entry; if(!entry) return;
-    let pdf; try{ pdf=await loadPdf(entry); }catch(e){ return; }
-    const pg=await pdf.getPage(pdfView.page); const base=pg.getViewport({scale:1});
-    const wrap=document.getElementById('pdf-canvas-wrap'); const avail=(wrap.clientWidth||500)-24;
-    if(avail>60) pdfView.scale=Math.max(0.3, Math.min(4, avail/base.width));
-    await renderPdfPage();
+async function renderOnePage(i, div){
+    if(pdfView.rendered.has(i)) return; pdfView.rendered.add(i);
+    let pdf; try{ pdf=await loadPdf(pdfView.entry); }catch(e){ pdfView.rendered.delete(i); return; }
+    let pg; try{ pg=await pdf.getPage(i); }catch(e){ return; }
+    const vp=pg.getViewport({scale:pdfView.scale});
+    const canvas=document.createElement('canvas'); canvas.width=vp.width; canvas.height=vp.height;
+    div.style.width=vp.width+'px'; div.style.height=vp.height+'px'; div.innerHTML=''; div.appendChild(canvas);
+    try{ await pg.render({canvasContext:canvas.getContext('2d'), viewport:vp}).promise; }catch(e){}
 }
-async function pdfDrawHighlights(ctx, page, viewport, quotes){
-    if(!quotes || !quotes.length) return 0;
-    const tc=await page.getTextContent();
-    const items=tc.items.filter(it=>it.str && it.str.length);
-    let norm=''; const owner=[];
-    items.forEach((it,idx)=>{ const a=pdfAlnum(it.str); for(let k=0;k<a.length;k++){ owner.push(idx); } norm+=a; });
-    if(!norm) return 0;
-    const marked=new Set();
-    quotes.forEach(q=>{ const frs=pdfFragments(q); const targets=frs.length?frs:[pdfAlnum(q)].filter(a=>a.length>=5);
-        targets.forEach(fr=>{ let from=0,p; while(fr.length>=5 && (p=norm.indexOf(fr,from))>=0){ for(let i=p;i<p+fr.length && i<owner.length;i++) marked.add(owner[i]); from=p+fr.length; } }); });
-    const wset=new Set(); quotes.forEach(q=>pdfQuoteTokens(q).forEach(w=>{ if(w.length>=5) wset.add(w); }));
-    if(wset.size){ items.forEach((it,idx)=>{ pdfTokensOf(it.str).forEach(t=>{ if(wset.has(t)) marked.add(idx); }); }); }
-    if(!marked.size) return 0;
-    ctx.save(); ctx.fillStyle='rgba(250,204,21,0.40)';
-    marked.forEach(idx=>{ const it=items[idx]; const tx=pdfjsLib.Util.transform(viewport.transform, it.transform);
-        const h=Math.hypot(tx[2],tx[3]) || (it.height*viewport.scale) || 10; const w=Math.max((it.width||0)*viewport.scale, 4);
-        ctx.fillRect(tx[4], tx[5]-h, w, h*1.15); });
-    ctx.restore(); return marked.size;
+function jumpToPage(i){
+    i=Math.max(1, Math.min(pdfView.numPages, i||1));
+    const div=document.querySelector('#pdf-pages .pdf-page[data-page="'+i+'"]');
+    const sc=document.getElementById('pdf-scroll');
+    if(div && sc) sc.scrollTop = div.offsetTop - 6;
+    pdfView.page=i; pdfUpdatePageInput();
+}
+function pdfUpdatePageInput(){ const inp=document.getElementById('pdf-pagenum'); if(inp) inp.value=pdfView.page; const tot=document.getElementById('pdf-pagetot'); if(tot) tot.textContent='/ '+pdfView.numPages; }
+function pdfOnScroll(){ const sc=document.getElementById('pdf-scroll'); if(!sc) return; const y=sc.scrollTop+24; const pages=sc.querySelectorAll('.pdf-page'); let cur=1; for(const d of pages){ if(d.offsetTop<=y) cur=+d.dataset.page; else break; } if(cur!==pdfView.page){ pdfView.page=cur; pdfUpdatePageInput(); } }
+function pdfReflow(keep){ const cur=keep||pdfView.page; buildPages(); jumpToPage(cur); }
+function fitPdf(){ if(!pdfView.entry) return; pdfComputeFit(); pdfReflow(pdfView.page); }
+function pdfZoom(d){ if(!pdfView.entry) return; pdfView.scale=Math.max(0.3, Math.min(4, pdfView.scale+d)); pdfReflow(pdfView.page); }
+
+async function openCitation(entry, page){ setReaderOpen(true); if(pdfView.entry!==entry){ await showSource(entry); } jumpToPage(page); }
+function setReaderOpen(on){ document.body.classList.toggle('pdf-open', on); const btn=document.getElementById('pdf-btn'); if(btn){ btn.classList.toggle('on', on); btn.setAttribute('aria-pressed', on?'true':'false'); } localStorage.setItem('bb_pdfReaderOpen', on?'true':'false'); }
+function togglePdfReader(force){
+    const on=(typeof force==='boolean')?force:!document.body.classList.contains('pdf-open');
+    setReaderOpen(on);
+    if(on){ if(!pdfView.entry){ const first=PDF_SOURCES.find(e=>e&&e.file); if(first) showSource(first); else pdfShowError('No source PDFs are configured for this quiz yet.'); } else { fitPdf(); } }
 }
 function pdfTabLabel(e){ return (e.title||e.file).replace(/\s*PDF\s*$/i,'').replace(/^.*\//,''); }
 function buildPdfTabs(){
@@ -2386,17 +2402,10 @@ function buildPdfTabs(){
     PDF_SOURCES.forEach(e=>{ if(!e || !e.file) return;
         const b=document.createElement('button'); b.className='pdf-tab'+(pdfView.entry===e?' active':'');
         b.textContent=pdfTabLabel(e); b.title=e.title||e.file;
-        b.addEventListener('click', ()=>{ if(pdfView.entry===e) return; pdfView.quotes=[]; showSource(e,1); });
+        b.addEventListener('click', ()=>{ if(pdfView.entry===e){ jumpToPage(1); return; } showSource(e); });
         box.appendChild(b); });
 }
-function emptyNoSource(msg){ buildPdfTabs(); const empty=document.getElementById('pdf-empty'), canvas=document.getElementById('pdf-canvas'); canvas.classList.add('hidden'); empty.classList.remove('hidden'); empty.textContent=msg; }
-function togglePdfReader(force){
-    const on=(typeof force==='boolean')?force:!document.body.classList.contains('pdf-open');
-    document.body.classList.toggle('pdf-open', on);
-    const btn=document.getElementById('pdf-btn'); if(btn){ btn.classList.toggle('on', on); btn.setAttribute('aria-pressed', on?'true':'false'); }
-    localStorage.setItem('bb_pdfReaderOpen', on?'true':'false');
-    if(on){ if(!pdfView.entry){ const first=PDF_SOURCES.find(e=>e&&e.file); if(first) showSource(first,1); else emptyNoSource('No source PDFs are configured for this quiz yet.'); } else { fitPdf(); } }
-}
+function togglePdfToolbar(){ const panel=document.getElementById('pdf-panel'); const c=panel.classList.toggle('tb-collapsed'); localStorage.setItem('bb_pdfToolbarCollapsed', c?'true':'false'); }
 function initPdfResizer(){
     const resizer=document.getElementById('pdf-resizer'); if(!resizer) return;
     const root=document.documentElement; const KEY='bb_pdfWidth'; const MIN=340, DEF=620;
@@ -2411,17 +2420,21 @@ function initPdfResizer(){
     resizer.addEventListener('dblclick',()=>{ root.style.setProperty('--pdf-width', DEF+'px'); localStorage.setItem(KEY,DEF); if(pdfView.entry) fitPdf(); });
 }
 (function initPdfReader(){
-    const btn=document.getElementById('pdf-btn');
+    const btn=document.getElementById('pdf-btn'); const mobile=window.innerWidth<=820;
     if(!pdfHasSources()){ if(btn) btn.style.display='none'; return; }
-    document.getElementById('pdf-prev').addEventListener('click',()=>{ if(pdfView.entry){ pdfView.page=Math.max(1,pdfView.page-1); renderPdfPage(); } });
-    document.getElementById('pdf-next').addEventListener('click',()=>{ if(pdfView.entry){ pdfView.page=Math.min(pdfView.numPages,pdfView.page+1); renderPdfPage(); } });
-    document.getElementById('pdf-pagenum').addEventListener('change',(e)=>{ const p=parseInt(e.target.value,10); if(p){ pdfView.page=Math.max(1,Math.min(pdfView.numPages,p)); renderPdfPage(); } });
-    document.getElementById('pdf-zoomin').addEventListener('click',()=>{ pdfView.scale=Math.min(4,pdfView.scale+0.2); renderPdfPage(); });
-    document.getElementById('pdf-zoomout').addEventListener('click',()=>{ pdfView.scale=Math.max(0.3,pdfView.scale-0.2); renderPdfPage(); });
-    document.getElementById('pdf-fit').addEventListener('click',()=>{ if(pdfView.entry) fitPdf(); });
+    if(mobile && btn) btn.style.display='none';       // reader is desktop-only
+    document.getElementById('pdf-prev').addEventListener('click',()=>jumpToPage(pdfView.page-1));
+    document.getElementById('pdf-next').addEventListener('click',()=>jumpToPage(pdfView.page+1));
+    document.getElementById('pdf-pagenum').addEventListener('change',(e)=>{ const p=parseInt(e.target.value,10); if(p) jumpToPage(p); });
+    document.getElementById('pdf-zoomin').addEventListener('click',()=>pdfZoom(0.2));
+    document.getElementById('pdf-zoomout').addEventListener('click',()=>pdfZoom(-0.2));
+    document.getElementById('pdf-fit').addEventListener('click',fitPdf);
+    document.getElementById('pdf-collapse').addEventListener('click',togglePdfToolbar);
+    const sc=document.getElementById('pdf-scroll'); if(sc) sc.addEventListener('scroll',()=>{ clearTimeout(pdfView._st); pdfView._st=setTimeout(pdfOnScroll,90); });
+    if(localStorage.getItem('bb_pdfToolbarCollapsed')==='true') document.getElementById('pdf-panel').classList.add('tb-collapsed');
     initPdfResizer();
-    document.addEventListener('keydown',(e)=>{ if(e.ctrlKey||e.metaKey||e.altKey) return; const ae=document.activeElement, tag=ae&&ae.tagName; if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return; if(e.key==='v'||e.key==='V'){ togglePdfReader(); } });
-    if(localStorage.getItem('bb_pdfReaderOpen')==='true') togglePdfReader(true);
+    document.addEventListener('keydown',(e)=>{ if(e.ctrlKey||e.metaKey||e.altKey) return; const ae=document.activeElement, tag=ae&&ae.tagName; if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return; if((e.key==='v'||e.key==='V') && window.innerWidth>820) togglePdfReader(); });
+    if(!mobile && localStorage.getItem('bb_pdfReaderOpen')==='true') togglePdfReader(true);
 })();
 
 /* ============================================================
